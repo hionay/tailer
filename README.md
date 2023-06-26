@@ -1,5 +1,7 @@
 # tailer
 
+[![Go](https://github.com/hionay/tailer/actions/workflows/go.yml/badge.svg)](https://github.com/hionay/tailer/actions/workflows/go.yml)
+
 I was inspired by [samwho/spacer](https://github.com/samwho/spacer), which was written in the Rust, and I really liked it. I decided to write it in the Go, and here we go! :)
 
 tailer is a simple CLI tool to insert lines when command output stops.
