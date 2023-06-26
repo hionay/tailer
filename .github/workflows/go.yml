@@ -1,0 +1,31 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+    
+jobs:
+  test:
+    strategy:
+      matrix:
+        os:  [ 'ubuntu-latest', 'macOS-latest', 'windows-latest' ]
+        go: [ '1.18', '1.19', '1.20' ]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Test
+      run: go test -count=1 -v -failfast -cover ./...
+
+    - name: Test with race detector
+      run: go test -count=1 -v -race -failfast -cover ./...
