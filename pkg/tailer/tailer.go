@@ -2,7 +2,6 @@ package tailer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,17 +15,16 @@ import (
 
 type Tailer struct {
 	pw         io.WriteCloser
-	aftrd      *afterReader
-	stopch     chan struct{}
+	readch     chan struct{}
 	opts       options
+	wg         sync.WaitGroup
 	mu         sync.Mutex
-	started    bool
 	isTerminal bool
 }
 
 func New(opts ...TailerOptionFunc) *Tailer {
 	tl := &Tailer{
-		stopch: make(chan struct{}),
+		readch: make(chan struct{}, 1),
 		opts:   getDefaultOptions(),
 	}
 	for _, opt := range opts {
@@ -36,55 +34,72 @@ func New(opts ...TailerOptionFunc) *Tailer {
 }
 
 func (tl *Tailer) Run(ctx context.Context) error {
+	pr, pw := io.Pipe()
 	tl.mu.Lock()
-	if tl.started {
-		tl.mu.Unlock()
-		return errors.New("already started")
-	}
-	tl.started = true
+	tl.pw = pw
 	tl.mu.Unlock()
-
-	defer close(tl.stopch)
 
 	if f, ok := tl.opts.outwr.(*os.File); ok && f != nil {
 		tl.isTerminal = term.IsTerminal(int(f.Fd()))
 	}
-	pr, pw := io.Pipe()
-	tl.pw = pw
-	aftrd := newAfterReader(tl.opts.inrd, tl.opts.afterDuration)
-	tl.aftrd = aftrd
 
+	tl.wg.Add(1)
 	go tl.worker(ctx)
-	go func() {
-		_, _ = io.Copy(pw, aftrd)
-	}()
-	_, err := io.Copy(tl.opts.outwr, pr)
+	go io.Copy(pw, tl.opts.inrd) //nolint:errcheck
+
+	var err error
+	buf := make([]byte, 2048)
+	for {
+		var n int
+		n, err = pr.Read(buf)
+		if err != nil {
+			close(tl.readch)
+			break
+		}
+		tl.mu.Lock()
+		_, _ = tl.opts.outwr.Write(buf[:n])
+		tl.mu.Unlock()
+		tl.readch <- struct{}{}
+	}
+	tl.wg.Wait()
+	if err == io.EOF {
+		return nil
+	}
 	return err
 }
 
 func (tl *Tailer) Close() error {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
-
-	if tl.started {
-		tl.started = false
-		return tl.pw.Close()
-	}
-	return nil
+	return tl.pw.Close()
 }
 
 func (tl *Tailer) worker(ctx context.Context) {
+	defer tl.wg.Done()
+
+	tm := time.NewTimer(tl.opts.afterDuration)
+	if !tm.Stop() {
+		<-tm.C
+	}
 	lastWriteTm := time.Now()
-	tailch := tl.aftrd.tailReceiver()
 	for {
 		select {
 		case <-ctx.Done():
-			_ = tl.pw.Close()
+			_ = tl.Close()
 			return
-		case <-tl.stopch:
-			_ = tl.pw.Close()
-			return
-		case <-tailch:
+		case _, ok := <-tl.readch:
+			if !ok {
+				_ = tl.Close()
+				return
+			}
+			if !tm.Stop() {
+				select {
+				case <-tm.C:
+				default:
+				}
+			}
+			tm.Reset(tl.opts.afterDuration)
+		case <-tm.C:
 			tmpassed := time.Since(lastWriteTm).Truncate(100 * time.Millisecond)
 			tl.writeTailer(tmpassed)
 			lastWriteTm = time.Now()
@@ -104,13 +119,12 @@ func (tl *Tailer) writeTailer(dur time.Duration) {
 		durstr = color.BlueString(durstr)
 	}
 
-	var width int
+	width := 80
 	if tl.isTerminal {
 		if f, ok := tl.opts.outwr.(*os.File); ok && f != nil {
-			var err error
-			width, _, err = term.GetSize(int(f.Fd()))
-			if err != nil {
-				width = 80
+			w, _, err := term.GetSize(int(f.Fd()))
+			if err == nil {
+				width = w
 			}
 		}
 	}
@@ -120,5 +134,7 @@ func (tl *Tailer) writeTailer(dur time.Duration) {
 	if rpt := width - filled; rpt > 0 {
 		sb.WriteString(strings.Repeat(tl.opts.dashString, rpt))
 	}
+	tl.mu.Lock()
 	_, _ = fmt.Fprintln(tl.opts.outwr, sb.String())
+	tl.mu.Unlock()
 }
