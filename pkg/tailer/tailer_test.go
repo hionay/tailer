@@ -71,9 +71,11 @@ func TestTailerRun(t *testing.T) {
 		err := tl.Run(context.Background())
 		assert.NoError(t, err)
 	}()
-	fmt.Fprintln(pw, "hello world")
+	txt := "hello world"
+	fmt.Fprintln(pw, txt)
 	time.AfterFunc(50*time.Millisecond, func() { _ = tl.Close() })
 	wg.Wait()
 	_ = pw.Close()
+	require.True(t, strings.HasPrefix(out.String(), txt+"\n"))
 	require.True(t, strings.HasSuffix(out.String(), DefaultDashString+"\n"))
 }

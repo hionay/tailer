@@ -47,24 +47,17 @@ func (tl *Tailer) Run(ctx context.Context) error {
 	go tl.worker(ctx)
 	go io.Copy(pw, tl.opts.inrd) //nolint:errcheck
 
-	var err error
-	buf := make([]byte, 2048)
-	for {
-		var n int
-		n, err = pr.Read(buf)
-		if err != nil {
-			close(tl.readch)
-			break
-		}
-		tl.mu.Lock()
-		_, _ = tl.opts.outwr.Write(buf[:n])
-		tl.mu.Unlock()
-		tl.readch <- struct{}{}
-	}
+	_, err := io.Copy(
+		writeFunc(func(p []byte) (int, error) {
+			tl.readch <- struct{}{}
+			tl.mu.Lock()
+			defer tl.mu.Unlock()
+			return tl.opts.outwr.Write(p)
+		}),
+		pr,
+	)
+	close(tl.readch)
 	tl.wg.Wait()
-	if err == io.EOF {
-		return nil
-	}
 	return err
 }
 
@@ -77,11 +70,12 @@ func (tl *Tailer) Close() error {
 func (tl *Tailer) worker(ctx context.Context) {
 	defer tl.wg.Done()
 
-	tm := time.NewTimer(tl.opts.afterDuration)
+	tm := time.NewTimer(0)
 	if !tm.Stop() {
 		<-tm.C
 	}
-	lastWriteTm := time.Now()
+
+	last := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,19 +93,18 @@ func (tl *Tailer) worker(ctx context.Context) {
 				}
 			}
 			tm.Reset(tl.opts.afterDuration)
-		case <-tm.C:
-			tmpassed := time.Since(lastWriteTm).Truncate(100 * time.Millisecond)
-			tl.writeTailer(tmpassed)
-			lastWriteTm = time.Now()
+		case ts := <-tm.C:
+			tl.printLine(ts, last)
+			last = ts
 		}
 	}
 }
 
-func (tl *Tailer) writeTailer(dur time.Duration) {
-	now := time.Now()
-	datestr := now.Format("2006-01-02")
-	tmstr := now.Format("15:04:05")
-	durstr := dur.String()
+func (tl *Tailer) printLine(ts, last time.Time) {
+	since := ts.Sub(last).Truncate(100 * time.Millisecond)
+	datestr := ts.Format("2006-01-02")
+	tmstr := ts.Format("15:04:05")
+	durstr := since.String()
 	filled := len(datestr) + len(tmstr) + len(durstr) + 3
 	if !tl.opts.noColor {
 		datestr = color.GreenString(datestr)
@@ -138,3 +131,7 @@ func (tl *Tailer) writeTailer(dur time.Duration) {
 	_, _ = fmt.Fprintln(tl.opts.outwr, sb.String())
 	tl.mu.Unlock()
 }
+
+type writeFunc func(p []byte) (int, error)
+
+func (wf writeFunc) Write(p []byte) (int, error) { return wf(p) }

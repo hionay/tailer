@@ -50,8 +50,8 @@ func main() {
 			if c.Bool(flagNoColor) {
 				opts = append(opts, tailer.WithNoColor(true))
 			}
-			gs := tailer.New(opts...)
-			return gs.Run(c.Context)
+			tl := tailer.New(opts...)
+			return tl.Run(c.Context)
 		},
 	}
 
