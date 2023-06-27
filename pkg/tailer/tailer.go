@@ -45,7 +45,10 @@ func (tl *Tailer) Run(ctx context.Context) error {
 
 	tl.wg.Add(1)
 	go tl.worker(ctx)
-	go io.Copy(pw, tl.opts.inrd) //nolint:errcheck
+	go func() {
+		_, _ = io.Copy(pw, tl.opts.inrd)
+		_ = tl.Close()
+	}()
 
 	_, err := io.Copy(
 		writeFunc(func(p []byte) (int, error) {
