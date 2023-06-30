@@ -7,7 +7,7 @@ import (
 )
 
 const DefaultWaitDuration = 1 * time.Second
-const DefaultDashString = "━"
+const DefaultDashString = "─"
 
 type options struct {
 	inrd          io.Reader
