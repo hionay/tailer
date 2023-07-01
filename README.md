@@ -15,10 +15,22 @@ go install github.com/hionay/tailer/cmd/tailer@latest
 ```
 
 ## Usage
-Here are the flags you can use with `tailer`:
+Here are the commands and flags you can use with `tailer`:
 ```
+COMMANDS:
+   exec, e  execute a command and tail its output
+   help, h  Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
    --no-color               disable color output (default: false)
    --after value, -a value  duration to wait after last output (default: 1s)
-   --dash value, -d value   dash string to print (default: "━")
+   --dash value, -d value   dash character to print (default: "─")
    --help, -h               show help
+   --version, -v            print the version
+```
+
+You can use `tailer` to execute a command with `exec` without the need for piping.
+
+```bash
+$ tailer exec "python3 -m http.server 9300"
 ```
