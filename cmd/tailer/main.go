@@ -79,7 +79,7 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name:  commandExec,
-				Usage: "execute a command and tail its output",
+				Usage: "Execute a command and tail its output",
 				Before: func(c *cli.Context) error {
 					if c.NArg() == 0 {
 						return errors.New("arguments cannot be empty")
@@ -128,10 +128,10 @@ func execAction(c *cli.Context) error {
 	return tl.Run(c.Context)
 }
 
-func parseCommand(first string) (string, []string) {
-	if strings.Contains(first, " ") {
-		split := strings.Split(first, " ")
+func parseCommand(args string) (string, []string) {
+	if strings.Contains(args, " ") {
+		split := strings.Split(args, " ")
 		return split[0], split[1:]
 	}
-	return first, nil
+	return args, nil
 }
