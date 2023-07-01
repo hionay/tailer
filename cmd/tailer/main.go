@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/urfave/cli/v2"
@@ -20,10 +24,29 @@ const (
 	flagNoColor    = "no-color"
 )
 
+const (
+	commandExec      = "exec"
+	commandExecShort = "e"
+)
+
+var version string
+
 func main() {
 	app := &cli.App{
-		Name:  "tailer",
-		Usage: "a simple CLI tool to insert lines when command output stops",
+		Name:    "tailer",
+		Version: version,
+		Usage:   "a simple CLI tool to insert lines when command output stops",
+		Before: func(c *cli.Context) error {
+			if c.IsSet(flagDash) {
+				if c.String(flagDash) == "" {
+					return errors.New("dash char cannot be empty")
+				}
+				if len(c.String(flagDash)) > 1 {
+					return errors.New("dash char cannot be longer than 1 character")
+				}
+			}
+			return nil
+		},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  flagNoColor,
@@ -37,7 +60,7 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:    flagDash,
-				Usage:   "dash string to print",
+				Usage:   "dash character to print",
 				Value:   tailer.DefaultDashString,
 				Aliases: []string{flagDashShort},
 			},
@@ -53,6 +76,20 @@ func main() {
 			tl := tailer.New(opts...)
 			return tl.Run(c.Context)
 		},
+		Commands: []*cli.Command{
+			{
+				Name:  commandExec,
+				Usage: "execute a command and tail its output",
+				Before: func(c *cli.Context) error {
+					if c.NArg() == 0 {
+						return errors.New("arguments cannot be empty")
+					}
+					return nil
+				},
+				Aliases: []string{commandExecShort},
+				Action:  execAction,
+			},
+		},
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -61,4 +98,40 @@ func main() {
 	if err := app.RunContext(ctx, os.Args); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func execAction(c *cli.Context) error {
+	first, tail := parseCommand(c.Args().First())
+	if tail == nil {
+		tail = c.Args().Tail()
+	}
+	cmd := exec.CommandContext(c.Context, first, tail...)
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	opts := []tailer.TailerOptionFunc{
+		tailer.WithAfterDuration(c.Duration(flagAfter)),
+		tailer.WithDashString(c.String(flagDash)),
+		tailer.WithInputReader(pr),
+	}
+	if c.Bool(flagNoColor) {
+		opts = append(opts, tailer.WithNoColor(true))
+	}
+	go func() {
+		if err := cmd.Run(); err != nil {
+			log.Printf("failed to run command: %v", err)
+		}
+		pw.Close()
+	}()
+	tl := tailer.New(opts...)
+	return tl.Run(c.Context)
+}
+
+func parseCommand(first string) (string, []string) {
+	if strings.Contains(first, " ") {
+		split := strings.Split(first, " ")
+		return split[0], split[1:]
+	}
+	return first, nil
 }
