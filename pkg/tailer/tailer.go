@@ -50,15 +50,13 @@ func (tl *Tailer) Run(ctx context.Context) error {
 		_ = tl.Close()
 	}()
 
-	_, err := io.Copy(
-		writeFunc(func(p []byte) (int, error) {
-			tl.readch <- struct{}{}
-			tl.mu.Lock()
-			defer tl.mu.Unlock()
-			return tl.opts.outwr.Write(p)
-		}),
-		pr,
-	)
+	writerFn := writeFunc(func(p []byte) (int, error) {
+		tl.readch <- struct{}{}
+		tl.mu.Lock()
+		defer tl.mu.Unlock()
+		return tl.opts.outwr.Write(p)
+	})
+	_, err := io.Copy(writerFn, pr)
 	close(tl.readch)
 	tl.wg.Wait()
 	return err
@@ -73,9 +71,9 @@ func (tl *Tailer) Close() error {
 func (tl *Tailer) worker(ctx context.Context) {
 	defer tl.wg.Done()
 
-	tm := time.NewTimer(0)
-	if !tm.Stop() {
-		<-tm.C
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
 	}
 
 	last := time.Now()
@@ -89,14 +87,14 @@ func (tl *Tailer) worker(ctx context.Context) {
 				_ = tl.Close()
 				return
 			}
-			if !tm.Stop() {
+			if !timer.Stop() {
 				select {
-				case <-tm.C:
+				case <-timer.C:
 				default:
 				}
 			}
-			tm.Reset(tl.opts.afterDuration)
-		case ts := <-tm.C:
+			timer.Reset(tl.opts.afterDuration)
+		case ts := <-timer.C:
 			tl.printLine(ts, last)
 			last = ts
 		}
@@ -104,15 +102,16 @@ func (tl *Tailer) worker(ctx context.Context) {
 }
 
 func (tl *Tailer) printLine(ts, last time.Time) {
-	since := ts.Sub(last).Truncate(100 * time.Millisecond)
-	datestr := ts.Format("2006-01-02")
-	tmstr := ts.Format("15:04:05")
-	durstr := since.String()
-	filled := len(datestr) + len(tmstr) + len(durstr) + 3
+	var (
+		datestr  = ts.Format("2006-01-02")
+		tmstr    = ts.Format("15:04:05")
+		sincestr = ts.Sub(last).Truncate(100 * time.Millisecond).String()
+	)
+	filled := len(datestr) + len(tmstr) + len(sincestr) + 3
 	if !tl.opts.noColor {
 		datestr = color.GreenString(datestr)
 		tmstr = color.YellowString(tmstr)
-		durstr = color.BlueString(durstr)
+		sincestr = color.BlueString(sincestr)
 	}
 
 	width := 80
@@ -126,9 +125,9 @@ func (tl *Tailer) printLine(ts, last time.Time) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(datestr + " " + tmstr + " " + durstr + " ")
-	if rpt := width - filled; rpt > 0 {
-		sb.WriteString(strings.Repeat(tl.opts.dashString, rpt))
+	sb.WriteString(datestr + " " + tmstr + " " + sincestr + " ")
+	if count := width - filled; count > 0 {
+		sb.WriteString(strings.Repeat(tl.opts.dashString, count))
 	}
 	tl.mu.Lock()
 	_, _ = fmt.Fprintln(tl.opts.outwr, sb.String())
